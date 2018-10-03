@@ -15,7 +15,7 @@ Building
 [Xcode](https://developer.apple.com/xcode/) is required. 
 Build the kernel extension (kext):
 
-     xcodebuild  -target VoltageShift.kext
+     xcodebuild  -target VoltageShift
      
 change the owner to root:wheel for the kext <br />
       sudo chown -R root:wheel build/Release/VoltageShift.kext
@@ -107,13 +107,17 @@ Additional
    To set the MSR
    
      ./voltageshift write <HEX_MSR> <HEX_VALUE>
+
+   To read direct memory
+
+      ./voltageshift rdmem <HEX_ADDR>
  
+   To set direct memory
    
+     ./voltageshift wrmem <HEX_ADDR> <HEX_VALUE>
 
 
     
-
-
 
 
 
