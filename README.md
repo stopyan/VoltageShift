@@ -54,6 +54,10 @@ You can continue to monitor the CPU frequency, power and temperture by using:
 
     ./voltageshift mon
     
+You can set CPU power limit by using:
+
+    ./voltageshift powerlimit <PL2 POWER> <PL2 WINDOW> <PL1 POWER> <PL1 WINDOW>
+
 Six types of voltage offset are disponible to change, however we only suggest undervolting the CPU and GPU only.
 
     ./voltageshift offset <CPU> <GPU> <CPUCache> <SystemAgency> <Analogy I/O> <Digital I/O>
@@ -66,7 +70,7 @@ If you set it too low the system will freeze, please turn OFF completely and tur
 
 After you test throughfuly the settings and are comfortable with System stability, you can apply the launchd: (require sudo root)
 
-    sudo ./voltageshift buildlaunchd  <CPU> <GPU> <CPUCache> <SystemAgency> <Analogy I/O> <Digital I/O> <Update Mins>
+    sudo ./voltageshift buildlaunchd  <CPU> <GPU> <CPUCache> <SystemAgency> <Analogy I/O> <Digital I/O> <PL2 POWER> <PL2 WINDOW> <PL1 POWER> <PL1 WINDOW> <Update Mins>
 
 The <Update Mins> is the update interval of the tool to check and change, the Default value is 160min, Hibernate (suspend to Disk) will reset the voltage setting, as sleep (suspend to memory) will not change the sleep value, it will scheduled check the setting in peroid, and amend if need.
 
@@ -75,7 +79,7 @@ The <Update Mins> is the update interval of the tool to check and change, the De
     
 for example:
 
-    sudo ./voltageshift buildlaunchd  -50 -50 0 0 0 0 60
+    sudo ./voltageshift buildlaunchd -50 -50 -50 0 0 0 25 0 48 0 60
 
 set system auto apply CPU -50mv and GPU -50mv every boot and every 60 minutes.
 
