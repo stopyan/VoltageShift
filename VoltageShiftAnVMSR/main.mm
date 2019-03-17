@@ -40,6 +40,9 @@
 #define OC_MAILBOX_VALUE_OFFSET		20
 #define OC_MAILBOX_RETRY_COUNT		5
 
+#define MCHBAR_ADDR_POWER   0xfed159a0
+#define MSR_ADDR_POWER      0x610
+#define MSR_ADDR_UNITS      0x606
 
 io_connect_t connect ;
 Boolean damagemode = false;
@@ -54,19 +57,12 @@ double power_units = 0;
 uint64 dtsmax = 0;
 uint64 tempoffset = 0;
 
-
-
-
 enum {
     AnVMSRActionMethodRDMSR = 0,
     AnVMSRActionMethodWRMSR = 1,
     AnVMSRActionMethodPrepareMap = 2,
     AnVMSRNumMethods
 };
-
-
-
-
 
 typedef struct {
 	UInt32 action;
@@ -78,6 +74,15 @@ typedef struct {
     UInt64 addr;
     UInt64 size;
 } map_t;
+
+typedef struct {
+    bool short_enabled;
+    float short_power;
+    float short_time;
+    bool long_enabled;
+    float long_power;
+    float long_time;
+} power_limit;
 
 io_service_t getService() {
 	io_service_t service = 0;
@@ -121,12 +126,15 @@ void usage(const char *name)
 
     printf("Usage:\n");
     printf("set voltage:  \n    %s offset <CPU> <GPU> <CPUCache> <SA> <AI/O> <DI/O>\n\n", name);
-    printf("set boot and auto apply:\n  sudo %s buildlaunchd <CPU> <GPU> <CPUCache> <SA> <AI/O> <DI/O> <UpdateMins (0 only apply at bootup)> \n\n", name);
+    printf("set boot and auto apply:\n  sudo %s buildlaunchd <CPU> <GPU> <CPUCache> <SA> <AI/O> <DI/O> <PL2 POWER> <PL2 WINDOW> <PL1 POWER> <PL1 WINDOW> <UpdateMins (0 only apply at bootup)> \n\n", name);
     printf("remove boot and auto apply:\n    %s removelaunchd \n\n", name);
-     printf("get info of current setting:\n    %s info \n\n", name);
+    printf("get info of current setting:\n    %s info \n\n", name);
     printf("continuous monitor of CPU:\n    %s mon \n\n", name);
     printf("read MSR: %s read <HEX_MSR>\n\n", name);
     printf("write MSR: %s write <HEX_MSR> <HEX_VALUE>\n\n", name);
+    printf("read memory: %s remem <HEX_ADDR>\n\n", name);
+    printf("write memory: %s wrmem <HEX_ADDR> <HEX_VALUE>\n\n", name);
+    printf("set power limit:  \n    %s powerlimit <PL2 POWER> <PL2 WINDOW> <PL1 POWER> <PL1 WINDOW>\n\n", name);
 }
 
 unsigned long long hex2int(const char *s)
@@ -846,34 +854,35 @@ int showcpuinfo(){
     
 }
 
-
+int access_power_limit(power_limit *pl, bool write);
 
 int setoffsetdaemons(int argc,const char * argv[]){
-    
-   
-    
-    
-  
-    
-        
-    for (int i=0;i<argc-2;i++){
-
-        int offset = (int)strtol((char *)argv[i+2],NULL,10);
-        if (readOCMailBox(i)!=offset){
-             writeOCMailBox(i, offset);
+    power_limit pl;
+    for (int i=0; i<argc-2; i++){
+        if (i < 6) {
+            int offset = (int)strtol((char *)argv[i+2],NULL,10);
+            if (readOCMailBox(i) != offset){
+                 writeOCMailBox(i, offset);
+            }
+        } else {
+            float val = strtof((char *)argv[i+2], NULL);
+            if (i == 6) {
+                pl.long_power = val;
+            } else if (i == 7) {
+                pl.long_time = val;
+            } else if (i == 8) {
+                pl.short_power = val;
+            } else if (i == 9) {
+                pl.short_time = val;
+            }
         }
-    
     }
-  
-    
+    pl.long_enabled = true;
+    pl.short_enabled = true;
+    access_power_limit(&pl, true);
+
     return(0);
-    
-    
 }
-
-
-
-
 
 int setoffset(int argc,const char * argv[]){
     
@@ -884,12 +893,8 @@ int setoffset(int argc,const char * argv[]){
     long analogy_offset = 0;
     long digitalio_offset = 0;
     
-    
     if (argc >= 3)
     {
-        
-    
-        
         cpu_offset = strtol((char *)argv[2],NULL,10);
         if (argc >=4)
             gpu_offset = strtol((char *)argv[3],NULL,10);
@@ -901,22 +906,16 @@ int setoffset(int argc,const char * argv[]){
             analogy_offset = strtol((char *)argv[6],NULL,10);
         if (argc >=8)
             digitalio_offset = strtol((char *)argv[7],NULL,10);
-        
-        
     } else {
         usage(argv[0]);
         
         return(1);
     }
     
-    
-  
     printf("--------------------------------------------------------------------------\n");
     printf("VoltageShift offset Tool\n");
     printf("--------------------------------------------------------------------------\n");
 
-    
-    
     if (argc >= 3)
         printf("Before CPU voltageoffset: %dmv\n",readOCMailBox(0));
     if (argc >= 4)
@@ -929,15 +928,12 @@ int setoffset(int argc,const char * argv[]){
         printf("Before Analogy I/O: %dmv\n",readOCMailBox(4));
     if (argc >= 8)
         printf("Before Digital I/O: %dmv\n",readOCMailBox(5));
-     printf("--------------------------------------------------------------------------\n");
-                            
-                            
-                            
-    
+    printf("--------------------------------------------------------------------------\n");
+
     if (argc >= 3)
-            writeOCMailBox(0, (int)cpu_offset);
+        writeOCMailBox(0, (int)cpu_offset);
     if (argc >= 4)
-            writeOCMailBox(1, (int)gpu_offset);
+        writeOCMailBox(1, (int)gpu_offset);
     if (argc >= 5)
         writeOCMailBox(2, (int)cpuccache_offset);
     if (argc >= 6)
@@ -960,24 +956,13 @@ int setoffset(int argc,const char * argv[]){
         printf("After Analogy I/O: %dmv\n",readOCMailBox(4));
     if (argc >= 8)
         printf("After Digital I/O: %dmv\n",readOCMailBox(5));
-     printf("--------------------------------------------------------------------------\n");
+    printf("--------------------------------------------------------------------------\n");
     
-    
-    
-    
-    
-            return(0);
-    
-    
+    return(0);
 }
 
 
 void unloadkext() {
-    
- 
-    
-  
-    
     
     if(connect)
     {
@@ -990,10 +975,7 @@ void unloadkext() {
     
     if(service)
         IOObjectRelease(service);
-    
 
-
-    
     std::stringstream output;
     output << "sudo kextunload -q -b "
       << "com.sicreative.VoltageShift"
@@ -1128,7 +1110,7 @@ void removeLaunchDaemons(){
 
 }
 
-void writeLaunchDaemons(std::vector<int>  values = {0},int min = 160  ) {
+void writeLaunchDaemons(std::vector<float>  values = {0},int min = 160  ) {
     std::stringstream output;
     
     if (min>720){
@@ -1154,11 +1136,9 @@ void writeLaunchDaemons(std::vector<int>  values = {0},int min = 160  ) {
      output.str("");
     
     //add 0 for no user input field
-    for (int i=(int)values.size();i<=6;i++){
+    for (int i=(int)values.size();i<10;i++){
         values.push_back(0);
-        
     }
-    
     
    output << "sudo echo \""
    << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
@@ -1346,12 +1326,16 @@ void writeLaunchDaemons(std::vector<int>  values = {0},int min = 160  ) {
     printf("sudo rm -R /Library/Application\\ Support/VoltageShift \n");
 
     printf("--------------------------------------------------------------------------\n");
-    printf("CPU             %d %s mv\n",values[0],values[0]>0?"!!!!!":"");
-    printf("GPU             %d %s mv\n",values[1],values[1]>0?"!!!!!":"");
-    printf("CPU Cache       %d %s mv\n",values[2],values[2]>0?"!!!!!":"");
-    printf("System Agency   %d %s mv\n",values[3],values[3]>0?"!!!!!":"");
-    printf("Analog IO       %d %s mv\n",values[4],values[4]>0?"!!!!!":"");
-    printf("Digital IO       %d %s mv\n",values[5],values[5]>0?"!!!!!":"");
+    printf("CPU             %d %s mv\n",(int)values[0],values[0]>0?"!!!!!":"");
+    printf("GPU             %d %s mv\n",(int)values[1],values[1]>0?"!!!!!":"");
+    printf("CPU Cache       %d %s mv\n",(int)values[2],values[2]>0?"!!!!!":"");
+    printf("System Agency   %d %s mv\n",(int)values[3],values[3]>0?"!!!!!":"");
+    printf("Analog IO       %d %s mv\n",(int)values[4],values[4]>0?"!!!!!":"");
+    printf("Digital IO      %d %s mv\n",(int)values[5],values[5]>0?"!!!!!":"");
+    printf("Long term power     %.03f W\n",values[6]);
+    printf("Long term window    %.03f W\n",values[7]);
+    printf("Short term power    %.03f W\n",values[8]);
+    printf("Short term window   %.03f W\n",values[9]);
     printf("--------------------------------------------------------------------------\n");
     printf("************************************************************************\n");
 
@@ -1456,10 +1440,11 @@ void unmap_physical(void *virt_addr __attribute__((unused)), size_t len __attrib
     // Nut'n Honey
 }
 
-int access_direct_memory(uintptr_t addr, uint32_t *value, bool write) {
+int access_direct_memory(uintptr_t addr, uint64_t *value, bool write)
+{
     // align to a page boundary
     const uintptr_t page_mask = 0xFFF;
-    const size_t len = 4;
+    const size_t len = 8;
     const uintptr_t page_offset = addr & page_mask;
     const uintptr_t map_addr = addr & ~page_mask;
     const size_t map_len = (len + page_offset + page_mask) & ~page_mask;
@@ -1473,16 +1458,269 @@ int access_direct_memory(uintptr_t addr, uint32_t *value, bool write) {
     volatile uint8_t * const buf = map_buf + page_offset;
     
     if (!write) {
-        *value = buf[0] | buf[1] << 8 | buf[2] << 16 | buf[3] << 24;
+        *value = *((uint64_t*)buf);
     } else {
-        buf[0] = (uint8_t) ((*value) & 0xFF);
-        buf[1] = (uint8_t) (((*value) >> 8) & 0xFF);
-        buf[2] = (uint8_t) (((*value) >> 16) & 0xFF);
-        buf[3] = (uint8_t) (((*value) >> 24) & 0xFF);
+        *((uint64_t*)buf) = *value;
     }
 //    unmap_physical(map_addr, map_len);
     
     return 0;
+}
+
+int read_msr(uint32_t addr, uint64_t *value)
+{
+    inout in;
+    inout out;
+    size_t outsize = sizeof(out);
+    int ret;
+    
+    in.msr = addr;
+    in.action = AnVMSRActionMethodRDMSR;
+    in.param = 0;
+    
+#if MAC_OS_X_VERSION_MIN_REQUIRED <= MAC_OS_X_VERSION_10_4
+    ret = IOConnectMethodStructureIStructureO( connect, AnVMSRActionMethodRDMSR,
+                                              sizeof(in),            /* structureInputSize */
+                                              &outsize,    /* structureOutputSize */
+                                              &in,        /* inputStructure */
+                                              &out);       /* ouputStructure */
+#else
+    ret = IOConnectCallStructMethod(connect,
+                                    AnVMSRActionMethodRDMSR,
+                                    &in,
+                                    sizeof(in),
+                                    &out,
+                                    &outsize
+                                    );
+#endif
+    
+    if (ret != KERN_SUCCESS)
+    {
+        printf("Can't connect to StructMethod to send commands\n");
+        return -1;
+    }
+    
+    *value = out.param;
+    return 0;
+}
+
+int write_msr(uint32_t addr, uint64_t *value)
+{
+    inout in;
+    inout out;
+    size_t outsize = sizeof(out);
+    int ret;
+    
+    in.msr = addr;
+    in.action = AnVMSRActionMethodWRMSR;
+    in.param = *value;
+    
+    ret = IOConnectCallStructMethod(connect,
+                                    AnVMSRActionMethodWRMSR,
+                                    &in,
+                                    sizeof(in),
+                                    &out,
+                                    &outsize
+                                    );
+    
+    if (ret != KERN_SUCCESS)
+    {
+        printf("Can't connect to StructMethod to send commands\n");
+        return -1;
+    }
+    return 0;
+}
+
+static float power_to_seconds(int value, int time_unit) {
+    float multiplier = 1 + ((value >> 6) & 0x3) / 4.f;
+    int exponent = (value >> 1) & 0x1f;
+    return exp2f(exponent) * multiplier / time_unit;
+}
+
+static int power_from_seconds(float seconds, int time_unit) {
+    if (log2f(seconds * time_unit / 1.75f) >= 0x1f) {
+        return 0xfe;
+    } else {
+        int i;
+        float last_diff = 1.f;
+        int last_result = 0;
+        for (i = 0; i < 4; i++) {
+            float multiplier = 1 + (i / 4.f);
+            float value = seconds * time_unit / multiplier;
+            float exponent = log2f(value);
+            int exponent_int = (int) exponent;
+            float diff = exponent - exponent_int;
+            if (exponent_int < 0x19 && diff > 0.5f) {
+                exponent_int++;
+                diff = 1.f - diff;
+            }
+            if (exponent_int < 0x20) {
+                if (diff < last_diff) {
+                    last_diff = diff;
+                    last_result = (i << 6) | (exponent_int << 1);
+                }
+            }
+        }
+        return last_result;
+    }
+}
+
+int access_power_limit(power_limit *pl, bool write)
+{
+    if (!pl ||
+        (write &&
+         (pl->short_power <= 0 ||
+          pl->long_power <= 0 ||
+          pl->short_power < pl->long_power))) {
+             printf("invalid power value!\n");
+             return -1;
+    }
+    
+    uint64_t msr_limit;
+    uint64_t mem_limit;
+    uint64_t units;
+    if (read_msr(MSR_ADDR_POWER, &msr_limit)) {
+        printf("get msr power limit 0x%x failed!\n", MSR_ADDR_POWER);
+        return -1;
+    }
+    if (access_direct_memory(MCHBAR_ADDR_POWER, &mem_limit, false)) {
+        printf("get mchbar 0x%x failed!\n", MCHBAR_ADDR_POWER);
+        return -1;
+    }
+    if (read_msr(MSR_ADDR_UNITS, &units)) {
+        printf("get units 0x%x failed!\n", MSR_ADDR_UNITS);
+        return -1;
+    }
+    
+    if ((msr_limit >> 63) & 0x1) {
+        printf("Warning: power limit is locked\n");
+    }
+    
+    int power_unit = (int) (exp2f(units & 0xf) + 0.5f);
+    int time_unit = (int) (exp2f((units >> 16) & 0xf) + 0.5f);
+    
+    if (write) {
+        uint64_t max_term = 0x7fff;
+        uint64_t masked = msr_limit & 0xffff0000ffff0000;
+        
+        uint64_t short_term = (uint64_t)(pl->short_power * power_unit);
+        short_term = short_term > max_term ? max_term : short_term;
+        
+        uint64_t long_term = (uint64_t)(pl->long_power * power_unit);
+        long_term = long_term > max_term ? max_term : long_term;
+        
+        uint64_t value = masked | (short_term << 32) | long_term;
+        uint64_t time;
+        if (pl->short_time > 0) {
+            masked = value & 0xff01ffffffffffff;
+            time = power_from_seconds(pl->short_time, time_unit);
+            printf("short_time = %f, time = 0x%llx\n", pl->short_time, time);
+            value = masked | (time << 48);
+        }
+        if (pl->long_time > 0) {
+            masked = value & 0xffffffffff01ffff;
+            time = power_from_seconds(pl->long_time, time_unit);
+            printf("long_time = %f, time = 0x%llx\n", pl->long_time, time);
+            value = masked | (time << 16);
+        }
+        value |= (pl->short_enabled ? 1L << 47 : 0) | (pl->long_enabled ? 1L << 15 : 0);
+        printf("value to write: 0x%llx\n", value);
+        if (access_direct_memory(MCHBAR_ADDR_POWER, &value, true)) {
+            printf("set mchbar 0x%x with 0x%llx failed!\n", MCHBAR_ADDR_POWER, value);
+            return -1;
+        }
+        if (write_msr(MSR_ADDR_POWER, &value)) {
+            printf("set msr 0x%x with 0x%llx failed!\n", MSR_ADDR_POWER, value);
+            return -1;
+        }
+    } else {
+        if (msr_limit != mem_limit) {
+            printf("Warning: MSR and memory values are not equal\n");
+        }
+        float short_term = ((msr_limit >> 32) & 0x7fff) / (float)power_unit;
+        float long_term = (msr_limit & 0x7fff) / (float)power_unit;
+        bool short_term_enabled = !!((msr_limit >> 47) & 1);
+        bool long_term_enabled = !!((msr_limit >> 15) & 1);
+        float short_term_window = power_to_seconds(msr_limit >> 48,
+                                                   time_unit);
+        float long_term_window = power_to_seconds(msr_limit >> 16,
+                                                  time_unit);
+        
+        pl->short_enabled = short_term_enabled;
+        pl->short_power = short_term;
+        pl->short_time = short_term_window;
+        pl->long_enabled = long_term_enabled;
+        pl->long_power = long_term;
+        pl->long_time = long_term_window;
+    }
+    
+    return 0;
+}
+
+int set_power_limit(int argc, const char * argv[])
+{
+    if (argc < 3) {
+        usage(argv[0]);
+        return(1);
+    }
+    
+    float val;
+    power_limit pl;
+    access_power_limit(&pl, false);
+    
+    printf("--------------------------------------------------------------------------\n");
+    printf("VoltageShift offset Tool\n");
+    printf("--------------------------------------------------------------------------\n");
+    printf("Before set power limit:\n");
+    access_power_limit(&pl, false);
+    printf("Short term power: %.03f W, %.03f s, %s\n",
+           pl.short_power, pl.short_time,
+           (pl.short_enabled ? "enabled" : "disabled"));
+    printf("Long term power: %.03f W, %.03f s, %s\n",
+           pl.long_power, pl.long_time,
+           (pl.long_enabled ? "enabled" : "disabled"));
+    
+    if ((val = strtof((char *)argv[2], NULL)) > 0) {
+        pl.long_enabled = true;
+        pl.long_power = val;
+    }
+    if (argc >=4) {
+        if ((val = strtof((char *)argv[3], NULL)) > 0) {
+            pl.long_enabled = true;
+            pl.long_time = val;
+        } else {
+            pl.long_time = 0;
+        }
+    }
+    if (argc >=5) {
+        if ((val = strtof((char *)argv[4], NULL)) > 0) {
+            pl.short_enabled = true;
+            pl.short_power = val;
+        }
+    }
+    if (argc >=6) {
+        if ((val = strtof((char *)argv[5], NULL)) > 0) {
+            pl.short_enabled = true;
+            pl.short_time = val;
+        } else {
+            pl.short_time = 0;
+        }
+    }
+    
+    access_power_limit(&pl, true);
+    
+    printf("After set power limit:\n");
+    access_power_limit(&pl, false);
+    printf("Short term power: %.03f W, %.03f s, %s\n",
+           pl.short_power, pl.short_time,
+           (pl.short_enabled ? "enabled" : "disabled"));
+    printf("Long term power: %.03f W, %.03f s, %s\n",
+           pl.long_power, pl.long_time,
+           (pl.long_enabled ? "enabled" : "disabled"));
+    
+    printf("--------------------------------------------------------------------------\n");
+    
+    return(0);
 }
 
 void intHandler(int sig)
@@ -1563,8 +1801,16 @@ int main(int argc, const char * argv[])
         printf("System Agency offset: %dmv\n",readOCMailBox(3));
         printf("Analogy I/O: %dmv\n",readOCMailBox(4));
         printf("Digital I/O: %dmv\n",readOCMailBox(5));
+        power_limit pl;
+        access_power_limit(&pl, false);
+        printf("Short term power: %.03f W, %.03f s, %s\n",
+               pl.short_power, pl.short_time,
+               (pl.short_enabled ? "enabled" : "disabled"));
+        printf("Long term power: %.03f W, %.03f s, %s\n",
+               pl.long_power, pl.long_time,
+               (pl.long_enabled ? "enabled" : "disabled"));
         showcpuinfo();
-           printf("\n");
+        printf("\n");
 
         
     }else if (!strncmp(parameter, "mon", 3)){
@@ -1672,7 +1918,7 @@ int main(int argc, const char * argv[])
                     
                     setoffset(argc-1,arrayOfCstrings);
 
-                }else if (!strncmp((char *)argv[2], "offsetdaemons", 6)){
+                }else if (!strncmp((char *)argv[2], "offsetdaemons", 13)){
                     
                     damagemode = true;
                     
@@ -1728,7 +1974,7 @@ int main(int argc, const char * argv[])
             removeLaunchDaemons();
         }else if (!strncmp(parameter, "buildlaunchd", 12)){
             
-          std::vector<int> arg;
+          std::vector<float> arg;
             
             
             if (argc >=3 )
@@ -1743,8 +1989,16 @@ int main(int argc, const char * argv[])
                 arg.push_back((int)strtol((char *)argv[6],NULL,10));
             if (argc >=8)
                 arg.push_back((int)strtol((char *)argv[7],NULL,10));
-            if (argc >=9){
-                writeLaunchDaemons(arg,(int)strtol((char *)argv[8],NULL,10));
+            if (argc >=9)
+                arg.push_back(strtof((char *)argv[8],NULL));
+            if (argc >=10)
+                arg.push_back(strtof((char *)argv[9],NULL));
+            if (argc >=11)
+                arg.push_back(strtof((char *)argv[10],NULL));
+            if (argc >=12)
+                arg.push_back(strtof((char *)argv[11],NULL));
+            if (argc >=13){
+                writeLaunchDaemons(arg,(int)strtol((char *)argv[12],NULL,10));
             }else{
             
             writeLaunchDaemons(arg);
@@ -1754,89 +2008,46 @@ int main(int argc, const char * argv[])
             setoffsetdaemons(argc,argv);
         }
         else if (!strncmp(parameter, "offset", 6)){
-            
              setoffset(argc,argv);
-            
-            
-
-        
+    }
+    else if (!strncmp(parameter, "powerlimit", 10))
+    {
+        set_power_limit(argc, argv);
     }
     else if (!strncmp(parameter, "read", 4))
     {
+        uint32_t addr = (uint32_t)hex2int(msr);
+        uint64_t value;
         
-        inout in;
-        inout out;
-        size_t outsize = sizeof(out);
-        
-        in.msr = (UInt32)hex2int(msr);
-        in.action = AnVMSRActionMethodRDMSR;
-        in.param = 0;
-
-#if MAC_OS_X_VERSION_MIN_REQUIRED <= MAC_OS_X_VERSION_10_4
-        ret = IOConnectMethodStructureIStructureO( connect, AnVMSRActionMethodRDMSR,
-											  sizeof(in),			/* structureInputSize */
-											  &outsize,    /* structureOutputSize */
-											  &in,        /* inputStructure */
-											  &out);       /* ouputStructure */
-#else
-        ret = IOConnectCallStructMethod(connect,
-									AnVMSRActionMethodRDMSR,
-									&in,
-									sizeof(in),
-									&out,
-									&outsize
-									);
-#endif
-
-        if (ret != KERN_SUCCESS)
-        {
-            printf("Can't connect to StructMethod to send commands\n");
+        int ret = read_msr(addr, &value);
+        if (ret == 0) {
+            printf("RDMSR 0x%x returns value 0x%llx\n", addr, value);
+        } else {
+            printf("RDMSR 0x%x failed!\n", addr);
         }
-
-        printf("RDMSR %x returns value 0x%llx\n", (unsigned int)in.msr, (unsigned long long)out.param);
     } else if (!strncmp(parameter, "write", 5)) {
         if (argc < 4)
         {
             usage(argv[0]);
-            
             return(1);
         }
         
-        inout in;
-        inout out;
-        size_t outsize = sizeof(out);
-
         regvalue = (char *)argv[3];
-
-        in.msr = (UInt32)hex2int(msr);
-        in.action = AnVMSRActionMethodWRMSR;
-        in.param = hex2int(regvalue);
-
-       // printf("WRMSR %x with value 0x%llx\n", (unsigned int)in.msr, (unsigned long long)in.param);
+        uint32_t addr = (uint32_t)hex2int(msr);
+        uint64_t value = (uint64_t)hex2int(regvalue);
         
-        
-
-
-        ret = IOConnectCallStructMethod(connect,
-                                        AnVMSRActionMethodWRMSR,
-                                        &in,
-                                        sizeof(in),
-                                        &out,
-                                        &outsize
-                                        );
-       
-
-        if (ret != KERN_SUCCESS)
-        {
-            printf("Can't connect to StructMethod to send commands\n");
+        int ret = write_msr(addr, &value);
+        if (ret == 0) {
+            read_msr(addr, &value);
+            printf("WRMSR 0x%x returns value 0x%llx\n", addr, value);
         }
     } else if (!strncmp(parameter, "rdmem", 5)) {
-        UInt32 addr = (UInt32)hex2int(msr);
-        uint32_t value = 0;
+        uint32_t addr = (uint32_t)hex2int(msr);
+        uint64_t value = 0;
         if (access_direct_memory(addr, &value, false) != 0) {
-            printf("read direct memory %x failed", addr);
+            printf("read direct memory 0x%x failed", addr);
         } else {
-            printf("RDMEM %x returns value 0x%x\n", addr, value);
+            printf("RDMEM 0x%x returns value 0x%llx\n", addr, value);
         }
     } else if (!strncmp(parameter, "wrmem", 5)) {
         if (argc < 4)
@@ -1847,14 +2058,14 @@ int main(int argc, const char * argv[])
         
         regvalue = (char *)argv[3];
         
-        UInt32 addr = (UInt32)hex2int(msr);
-        uint32_t value = (uint32_t)hex2int(regvalue);
+        uint32_t addr = (uint32_t)hex2int(msr);
+        uint64_t value = (uint64_t)hex2int(regvalue);
         
         if (access_direct_memory(addr, &value, true) != 0) {
-            printf("write direct memory %x with %x failed", addr, value);
+            printf("write direct memory 0x%x with %llx failed", addr, value);
         } else {
             access_direct_memory(addr, &value, false);
-            printf("WRMEM %x returns value 0x%x\n", addr, value);
+            printf("WRMEM 0x%x returns value 0x%llx\n", addr, value);
         }
     } else {
         usage(argv[0]);
