@@ -53,6 +53,7 @@ double basefreq = 0;
 double maxturbofreq = 0;
 double multturbofreq = 0;
 double fourthturbofreq = 0;
+double sixthturbofreq = 0;
 double power_units = 0;
 uint64 dtsmax = 0;
 uint64 tempoffset = 0;
@@ -126,7 +127,7 @@ void usage(const char *name)
 
     printf("Usage:\n");
     printf("set voltage:  \n    %s offset <CPU> <GPU> <CPUCache> <SA> <AI/O> <DI/O>\n\n", name);
-    printf("set boot and auto apply:\n  sudo %s buildlaunchd <CPU> <GPU> <CPUCache> <SA> <AI/O> <DI/O> <PL2 POWER> <PL2 WINDOW> <PL1 POWER> <PL1 WINDOW> <UpdateMins (0 only apply at bootup)> \n\n", name);
+    printf("set boot and auto apply:\n  sudo %s buildlaunchd <CPU> <GPU> <CPUCache> <SA> <AI/O> <DI/O> <PL1 POWER> <PL1 WINDOW> <PL2 POWER> <PL2 WINDOW> <UpdateMins (0 only apply at bootup)> \n\n", name);
     printf("remove boot and auto apply:\n    %s removelaunchd \n\n", name);
     printf("get info of current setting:\n    %s info \n\n", name);
     printf("continuous monitor of CPU:\n    %s mon \n\n", name);
@@ -165,8 +166,6 @@ unsigned long long hex2int(const char *s)
 
 
 int writeOCMailBox (int domain,int offset){
-    
-
     
     if (offset > 0 && !damagemode){
         printf("--------------------------------------------------------------------------\n");
@@ -211,10 +210,7 @@ int writeOCMailBox (int domain,int offset){
         offsetvalue = offset * 2;
     }
     
-    
-    
     uint64 value = offsetvalue << OC_MAILBOX_VALUE_OFFSET;
-    
     
     // MSR 0x150 OC Mailbox 0x11 for write of voltage offset values
     uint64 cmd = OC_MAILBOX_WHITE_VOLTAGE_CMD;
@@ -233,16 +229,13 @@ int writeOCMailBox (int domain,int offset){
     /* Set the busy bit to indicate OS is trying to issue command */
     value |= ((uint64)0x1) << MSR_OC_MAILBOX_BUSY_BIT;
    
-    
-    
     in.msr = (UInt32)MSR_OC_MAILBOX;
     in.action = AnVMSRActionMethodWRMSR;
     in.param = value;
     
-  //  printf("WRMSR %x with value 0x%llx\n", (unsigned int)in.msr, (unsigned long long)in.param);
+//    printf("WRMSR %x with value 0x%llx\n", (unsigned int)in.msr, (unsigned long long)in.param);
     
    // return (0);
-    
     
     ret = IOConnectCallStructMethod(connect,
                                     AnVMSRActionMethodWRMSR,
@@ -251,19 +244,13 @@ int writeOCMailBox (int domain,int offset){
                                     &out,
                                     &outsize
                                     );
-    
-    
-    
-    
-    
+
     if (ret != KERN_SUCCESS) {
         printf("cpu OC mailbox write failed\n");
         return 0;
     }
     
     return 0;
-  
-    
 }
 
 
@@ -286,15 +273,11 @@ int readOCMailBox (int domain){
     /* Set the busy bit to indicate OS is trying to issue command */
     value |= ((uint64)0x1) << MSR_OC_MAILBOX_BUSY_BIT;
     
-    
     in.msr = (UInt32)MSR_OC_MAILBOX;
     in.action = AnVMSRActionMethodWRMSR;
     in.param = value;
     
-    //printf("WRMSR %x with value 0x%llx\n", (unsigned int)in.msr, (unsigned long long)in.param);
-    
-    
-    
+//    printf("WRMSR %x with value 0x%llx\n", (unsigned int)in.msr, (unsigned long long)in.param);
 
     ret = IOConnectCallStructMethod(connect,
                                     AnVMSRActionMethodWRMSR,
@@ -304,10 +287,6 @@ int readOCMailBox (int domain){
                                     &outsize
                                     );
 
-    
-
-    
-  
     if (ret != KERN_SUCCESS) {
         printf("cpu OC mailbox write failed\n");
         return 0;
@@ -330,13 +309,7 @@ int readOCMailBox (int domain){
         if (ret != KERN_SUCCESS)
         {
             printf("Can't read voltage 0xe7 \n");
-            
-            
         }
-        
-        
-
-     
         
         if (out.param & (((uint64)0x1) << MSR_OC_MAILBOX_BUSY_BIT)) {
             printf(" OC mailbox still processing\n");
@@ -346,14 +319,9 @@ int readOCMailBox (int domain){
         
         if ((out.param >> MSR_OC_MAILBOX_RSP_OFFSET) & 0xff) {
             printf("OC mailbox cmd failed\n");
-           
             break;
         }
-     
-        
 
-        
-        
         break;
     }
     
@@ -456,10 +424,11 @@ int showcpuinfo(){
         
         
         // double power_units = pow(0.5,(double)(out.param &0xf));
-          maxturbofreq =(double)(out.param & 0xff) * 100.0;
+        maxturbofreq =(double)(out.param & 0xff) * 100.0;
         multturbofreq =(double)(out.param>>8 & 0xff) * 100.0;
         fourthturbofreq =(double)(out.param>>24 &0xff) * 100.0;
-        printf("CPU BaseFreq: %.0f, CPU MaxFreq(1/2/4): %.0f/%.0f/%.0f (mhz) \n",basefreq ,maxturbofreq,multturbofreq,fourthturbofreq);
+        sixthturbofreq =(double)(out.param>>40 &0xff) * 100.0;
+        printf("CPU BaseFreq: %.0f, CPU MaxFreq(1/2/4/6): %.0f/%.0f/%.0f/%.0f (mhz) \n",basefreq ,maxturbofreq,multturbofreq,fourthturbofreq,sixthturbofreq);
     }
     
     
@@ -2037,10 +2006,10 @@ int main(int argc, const char * argv[])
         uint64_t value = (uint64_t)hex2int(regvalue);
         
         int ret = write_msr(addr, &value);
-        if (ret == 0) {
-            read_msr(addr, &value);
-            printf("WRMSR 0x%x returns value 0x%llx\n", addr, value);
-        }
+//        if (ret == 0) {
+//            read_msr(addr, &value);
+//            printf("WRMSR 0x%x returns value 0x%llx\n", addr, value);
+//        }
     } else if (!strncmp(parameter, "rdmem", 5)) {
         uint32_t addr = (uint32_t)hex2int(msr);
         uint64_t value = 0;
