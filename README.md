@@ -54,9 +54,9 @@ You can continue to monitor the CPU frequency, power and temperture by using:
 
     ./voltageshift mon
     
-You can set CPU power limit by using:
+You can set CPU power limit by using (PL1 means long term, PL2 means short term):
 
-    ./voltageshift powerlimit <PL2 POWER> <PL2 WINDOW> <PL1 POWER> <PL1 WINDOW>
+    ./voltageshift powerlimit <PL1 POWER> <PL1 WINDOW> <PL2 POWER> <PL2 WINDOW>
 
 Six types of voltage offset are disponible to change, however we only suggest undervolting the CPU and GPU only.
 
